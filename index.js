@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -46,7 +47,7 @@ app.use('/api/', limiter);
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: process.env.CLIENT_URL || 'http://localhost:3060',
   credentials: true,
 }));
 
@@ -60,6 +61,7 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // Database connection
+console.log('MONGODB_URI:', process.env.MONGODB_URI);
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/oldvinehotel', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
