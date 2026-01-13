@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const compression = require('compression');
 const morgan = require('morgan');
+const path = require('path'); 
 require('dotenv').config();
 
 // Import routes
@@ -33,6 +34,8 @@ const logger = require('./utils/logger');
 const app = express();
 const PORT = process.env.PORT || 5080;
 
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 app.use(compression());
@@ -59,6 +62,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
 }
+
+
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Database connection
 console.log('MONGODB_URI:', process.env.MONGODB_URI);
@@ -117,7 +123,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// Error handling middleware (must be last)
+// Error handling middleware
 app.use(errorHandler);
 
 // 404 handler

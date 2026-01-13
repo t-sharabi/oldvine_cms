@@ -4,6 +4,23 @@ const BlogPost = require('../models/BlogPost');
 const adminAuth = require('../middleware/adminAuth');
 const { body, validationResult } = require('express-validator');
 
+
+function makeSlug(input = "") {
+  return input
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+    .replace(/(^-|-$)+/g, "");
+}
+
+async function ensureUniqueSlug(baseSlug) {
+  let slug = baseSlug || `post-${Date.now()}`;
+  const exists = await BlogPost.findOne({ slug }).select("_id");
+  if (!exists) return slug;
+  return `${slug}-${Date.now()}`;
+}
+
 // @route   GET /api/blog
 // @desc    Get published blog posts
 // @access  Public
@@ -158,9 +175,20 @@ router.post('/', adminAuth, [
     }
 
     const postData = {
-      ...req.body,
-      author: req.admin.id
-    };
+        ...req.body,
+        author: req.admin.id
+      };
+
+      if (!postData.slug || !postData.slug.trim()) {
+        postData.slug = makeSlug(postData.title || "");
+      }
+
+      if (!postData.slug) {
+        postData.slug = `post-${Date.now()}`;
+      }
+
+      postData.slug = await ensureUniqueSlug(postData.slug);
+
 
     const post = new BlogPost(postData);
     await post.save();

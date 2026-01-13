@@ -4,105 +4,7 @@ const RoomCategory = require('../models/RoomCategory');
 const Room = require('../models/Room');
 const adminAuth = require('../middleware/adminAuth');
 
-// @route   GET /api/room-categories
-// @desc    Get all active room categories
-// @access  Public
-router.get('/', async (req, res) => {
-  try {
-    const categories = await RoomCategory.find({ isActive: true })
-      .sort({ displayOrder: 1, name: 1 })
-      .lean();
-
-    // Calculate room count and price range for each category
-    const categoriesWithStats = await Promise.all(
-      categories.map(async (category) => {
-        const rooms = await Room.find({
-          category: category._id,
-          isActive: true
-        }).lean();
-
-        const prices = rooms.map(r => r.basePrice).filter(p => p > 0);
-        
-        return {
-          ...category,
-          roomCount: rooms.length,
-          priceRange: {
-            min: prices.length > 0 ? Math.min(...prices) : 0,
-            max: prices.length > 0 ? Math.max(...prices) : 0
-          },
-          primaryImage: category.images.find(img => img.isPrimary)?.url || 
-                        (category.images.length > 0 ? category.images[0].url : null),
-          imageCount: category.images.length
-        };
-      })
-    );
-
-    res.json({
-      success: true,
-      data: { categories: categoriesWithStats }
-    });
-  } catch (error) {
-    console.error('Error fetching room categories:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching room categories'
-    });
-  }
-});
-
-// @route   GET /api/room-categories/:slug
-// @desc    Get single room category with all images and rooms
-// @access  Public
-router.get('/:slug', async (req, res) => {
-  try {
-    const category = await RoomCategory.findOne({
-      slug: req.params.slug,
-      isActive: true
-    });
-
-    if (!category) {
-      return res.status(404).json({
-        success: false,
-        message: 'Room category not found'
-      });
-    }
-
-    // Get all rooms in this category
-    const rooms = await Room.find({
-      category: category._id,
-      isActive: true
-    })
-      .sort({ basePrice: 1 })
-      .lean();
-
-    // Calculate price range
-    const prices = rooms.map(r => r.basePrice).filter(p => p > 0);
-    const priceRange = {
-      min: prices.length > 0 ? Math.min(...prices) : 0,
-      max: prices.length > 0 ? Math.max(...prices) : 0
-    };
-
-    const categoryData = category.toObject();
-    categoryData.rooms = rooms;
-    categoryData.roomCount = rooms.length;
-    categoryData.priceRange = priceRange;
-    categoryData.primaryImage = category.primaryImage;
-    categoryData.imageCount = category.images.length;
-
-    res.json({
-      success: true,
-      data: { category: categoryData }
-    });
-  } catch (error) {
-    console.error('Error fetching room category:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching room category'
-    });
-  }
-});
-
-// ==================== ADMIN ROUTES ====================
+// ==================== ADMIN ROUTES (put before /:slug to avoid conflicts) ====================
 
 // @route   GET /api/room-categories/admin/all
 // @desc    Get all room categories (including inactive) - Admin only
@@ -192,7 +94,7 @@ router.delete('/:id', adminAuth, async (req, res) => {
   try {
     // Check if any rooms are using this category
     const roomsCount = await Room.countDocuments({ category: req.params.id });
-    
+
     if (roomsCount > 0) {
       return res.status(400).json({
         success: false,
@@ -222,5 +124,135 @@ router.delete('/:id', adminAuth, async (req, res) => {
   }
 });
 
-module.exports = router;
+// ==================== PUBLIC ROUTES ====================
 
+// @route   GET /api/room-categories
+// @desc    Get all active room categories
+// @access  Public
+router.get('/', async (req, res) => {
+  try {
+    const categories = await RoomCategory.find({ isActive: true })
+      .sort({ displayOrder: 1, name: 1 })
+      .lean();
+
+    const categoriesWithStats = await Promise.all(
+      categories.map(async (category) => {
+        const rooms = await Room.find({
+          category: category._id,
+          isActive: true
+        }).lean();
+
+        const prices = rooms.map(r => r.basePrice).filter(p => p > 0);
+
+        // ✅ Category primary image (if category has images)
+        const categoryPrimary =
+          (category.images || []).find(img => img.isPrimary)?.url ||
+          ((category.images || []).length > 0 ? category.images[0].url : null);
+
+        // ✅ Room primary image fallback (if category has no images)
+        const roomPrimary =
+          rooms
+            .flatMap(r => (r.images || []))
+            .find(img => img?.isPrimary && img?.url)?.url ||
+          rooms
+            .flatMap(r => (r.images || []))
+            .find(img => img?.url)?.url ||
+          null;
+
+        // ✅ If category has no images, use rooms images count
+        const roomImagesCount = rooms.reduce((sum, r) => sum + ((r.images || []).length), 0);
+
+        return {
+          ...category,
+          roomCount: rooms.length,
+          priceRange: {
+            min: prices.length > 0 ? Math.min(...prices) : 0,
+            max: prices.length > 0 ? Math.max(...prices) : 0
+          },
+          primaryImage: categoryPrimary || roomPrimary || null,
+          imageCount: (category.images || []).length > 0 ? (category.images || []).length : roomImagesCount
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      data: { categories: categoriesWithStats }
+    });
+  } catch (error) {
+    console.error('Error fetching room categories:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching room categories'
+    });
+  }
+});
+
+// @route   GET /api/room-categories/:slug
+// @desc    Get single room category with all images and rooms
+// @access  Public
+router.get('/:slug', async (req, res) => {
+  try {
+    const category = await RoomCategory.findOne({
+      slug: req.params.slug,
+      isActive: true
+    });
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: 'Room category not found'
+      });
+    }
+
+    const rooms = await Room.find({
+      category: category._id,
+      isActive: true
+    })
+      .sort({ basePrice: 1 })
+      .lean();
+
+    const prices = rooms.map(r => r.basePrice).filter(p => p > 0);
+    const priceRange = {
+      min: prices.length > 0 ? Math.min(...prices) : 0,
+      max: prices.length > 0 ? Math.max(...prices) : 0
+    };
+
+    const categoryData = category.toObject();
+    categoryData.rooms = rooms;
+    categoryData.roomCount = rooms.length;
+    categoryData.priceRange = priceRange;
+
+    // ✅ Same fallback logic for primaryImage
+    const categoryPrimary =
+      (categoryData.images || []).find(img => img.isPrimary)?.url ||
+      ((categoryData.images || []).length > 0 ? categoryData.images[0].url : null);
+
+    const roomPrimary =
+      rooms
+        .flatMap(r => (r.images || []))
+        .find(img => img?.isPrimary && img?.url)?.url ||
+      rooms
+        .flatMap(r => (r.images || []))
+        .find(img => img?.url)?.url ||
+      null;
+
+    const roomImagesCount = rooms.reduce((sum, r) => sum + ((r.images || []).length), 0);
+
+    categoryData.primaryImage = categoryPrimary || roomPrimary || null;
+    categoryData.imageCount = (categoryData.images || []).length > 0 ? (categoryData.images || []).length : roomImagesCount;
+
+    res.json({
+      success: true,
+      data: { category: categoryData }
+    });
+  } catch (error) {
+    console.error('Error fetching room category:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching room category'
+    });
+  }
+});
+
+module.exports = router;

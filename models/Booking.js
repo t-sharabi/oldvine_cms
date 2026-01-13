@@ -206,7 +206,7 @@ bookingSchema.virtual('duration').get(function() {
 });
 
 // Pre-save middleware to generate booking number and confirmation code
-bookingSchema.pre('save', function(next) {
+bookingSchema.pre('validate', function(next) {
   if (!this.bookingNumber) {
     // Generate booking number: OVH + year + random 6 digits
     const year = new Date().getFullYear();

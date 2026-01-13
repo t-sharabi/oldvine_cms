@@ -10,6 +10,114 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const sendEmail = require('../utils/sendEmail');
 const logger = require('../utils/logger');
 
+
+// @route   POST /api/bookings/request
+// @desc    Create a booking request (no online payment)
+// @access  Public
+router.post('/request', [
+  body('guestInfo.firstName').notEmpty().withMessage('First name is required'),
+  body('guestInfo.lastName').notEmpty().withMessage('Last name is required'),
+  body('guestInfo.email').isEmail().withMessage('Valid email is required'),
+  body('guestInfo.phone').notEmpty().withMessage('Phone number is required'),
+  body('roomId').isMongoId().withMessage('Valid room ID is required'),
+  body('checkInDate').isISO8601().withMessage('Valid check-in date is required'),
+  body('checkOutDate').isISO8601().withMessage('Valid check-out date is required'),
+  body('numberOfGuests.adults').isInt({ min: 1 }).withMessage('At least 1 adult required'),
+  body('numberOfGuests.children').optional().isInt({ min: 0 }),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation errors',
+        errors: errors.array()
+      });
+    }
+
+    const { guestInfo, roomId, checkInDate, checkOutDate, numberOfGuests, specialRequests } = req.body;
+
+    const checkIn = new Date(checkInDate);
+    const checkOut = new Date(checkOutDate);
+
+    if (checkIn >= checkOut) {
+      return res.status(400).json({ success: false, message: 'Check-out date must be after check-in date' });
+    }
+    if (checkIn < new Date()) {
+      return res.status(400).json({ success: false, message: 'Check-in date cannot be in the past' });
+    }
+
+    const room = await Room.findById(roomId);
+    if (!room || !room.isActive) {
+      return res.status(404).json({ success: false, message: 'Room not found' });
+    }
+
+    const totalGuests = Number(numberOfGuests.adults) + Number(numberOfGuests.children || 0);
+    if (room.maxOccupancy < totalGuests) {
+      return res.status(400).json({
+        success: false,
+        message: `Room can accommodate maximum ${room.maxOccupancy} guests`
+      });
+    }
+
+    const isAvailable = await room.isAvailable(checkIn, checkOut);
+    if (!isAvailable) {
+      return res.status(400).json({
+        success: false,
+        message: 'Room is not available for the selected dates'
+      });
+    }
+
+    // Find or create guest
+    let guest = await Guest.findOne({ email: guestInfo.email });
+    if (!guest) {
+      guest = new Guest({ ...guestInfo, isRegistered: false });
+      await guest.save();
+    } else {
+      Object.assign(guest, guestInfo);
+      await guest.save();
+    }
+
+    // Pricing
+    const numberOfNights = Math.ceil((checkOut - checkIn) / (1000 * 60 * 60 * 24));
+    const roomRate = room.currentPrice;
+    const subtotal = roomRate * numberOfNights;
+    const taxes = subtotal * 0.12;
+    const totalAmount = subtotal + taxes;
+
+    const booking = new Booking({
+      guest: guest._id,
+      room: roomId,
+      checkInDate: checkIn,
+      checkOutDate: checkOut,
+      numberOfGuests,
+      roomRate,
+      numberOfNights,
+      subtotal,
+      taxes,
+      totalAmount,
+      specialRequests,
+      paymentStatus: 'Pending',
+      paymentMethod: 'Cash',
+      status: 'Pending',
+      bookingSource: 'Direct'
+    });
+
+    await booking.save();
+    await booking.populate(['guest', 'room']);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Booking request submitted successfully',
+      data: { booking }
+    });
+  } catch (error) {
+    logger.error('Error creating booking request:', error);
+    return res.status(500).json({ success: false, message: 'Server error while creating booking request' });
+  }
+});
+
+
 // @route   POST /api/bookings
 // @desc    Create a new booking
 // @access  Public
